@@ -69,7 +69,7 @@ pdfmulti_para = para_multi(pdf_test)
 
 pm_pdf = pdf_multi(pdf_test([2 7 12 17],2:end), pdfmulti_para)
 
-%pm_pdf =
+%pm_pdf =w
 %  7.9450e-001  6.5308e-017
 %  3.9535e+000  3.8239e-013
 %  1.6357e-009  8.6220e-001
@@ -136,56 +136,133 @@ plot2features(train, 4, 6)
 % to identify outliers you can use two output argument versions 
 % of min and max functions
 
-[mv midx] = min(train)
 
 % because the minimum or maximum values can be determined always,
 % it's worth to look at neighbors of the suspected sample in the training set
 
 % let's assume that sample 41 is suspected
-midx = 41
-train(midx-1:midx+1, :)
 % it seems that these three rows are very similar to each other...
 % that's because 41 is evidently not an outlier index
 
-% if you're sure tha midx sample should be removed:
-size(train)
-train(midx, :) = [];
-size(train)
-
-% Create box plots for each feature, separated by class
-classes = unique(train(:,1));
-num_features = size(train, 2) - 1;  % excluding class column
-
-% Create a figure with subplots for each feature
-figure('Position', [100, 100, 1200, 800]);  % Make the figure larger
-
-for i = 2:size(train, 2)
-    subplot(ceil(num_features/2), 2, i-1);
+% Plot histograms for each feature
+for feat = 2:size(train, 2)
+    % Class-specific histograms (separate plots to avoid alpha issues)
+    classes = unique(train(:,1));
+    colors = 'rgbcmykw';
     
-    % Create vectors for boxplot
-    feature_values = [];
-    group_labels = [];
-    
-    % Collect data for each class
-    for c = classes'
-        class_data = train(train(:,1) == c, i);
-        feature_values = [feature_values; class_data];
-        group_labels = [group_labels; repmat(c, length(class_data), 1)];
+    figure;
+    for c = 1:length(classes)
+        subplot(2,4,c);  % 2x4 grid of subplots for 8 classes
+        class_data = train(train(:,1) == classes(c), feat);
+        hist(class_data, 20, colors(c));
+        title(sprintf('Class %d', classes(c)));
+        xlabel(sprintf('Feature %d', feat)); 
+        ylabel('Frequency');
+        grid on;
     end
-    
-    % Create box plot
-    boxplot(feature_values, group_labels, ...
-            'Labels', cellstr(num2str(classes)), ...
-            'Notch', 'on', ...
-            'Symbol', 'r+');  % Show outliers as red crosses
-    
-    title(sprintf('Feature %d Distribution by Class', i));
-    ylabel('Value');
-    grid on;
 end
 
-% Adjust subplot spacing
-sgtitle('Box Plots of Features by Class');
+%find outliers in the training set
+function cleaned_train = find_class_outliers(train)
+    classes = unique(train(:,1));
+    MIN_THRESHOLD = 1e-6;
+    NEIGHBORS_TO_SHOW = 2;
+    Z_SCORE_THRESHOLD = 3.5;
+    MEAN_MEDIAN_THRESHOLD = 1.5;
+    
+    % Keep track of rows to remove
+    rows_to_remove = [];
+    
+    for c = classes'
+        class_mask = train(:,1) == c;
+        class_samples = train(class_mask, :);
+        class_indices = find(class_mask);
+        
+        % For each feature
+        for f = 2:size(train, 2)
+            feature_values = class_samples(:, f);
+            
+            if all(abs(feature_values) < MIN_THRESHOLD)
+                continue;
+            end
+            
+            % Calculate statistics
+            mean_val = mean(feature_values);
+            median_val = median(feature_values);
+            std_val = std(feature_values);
+            
+            % Print class and feature statistics
+            fprintf('\nClass %d, Feature %d Statistics:\n', c, f);
+            fprintf('Mean: %.6f\n', mean_val);
+            fprintf('Median: %.6f\n', median_val);
+            fprintf('Std: %.6f\n', std_val);
+            
+            % Check mean-median difference
+            mean_median_diff = abs(mean_val - median_val) / std_val;
+            fprintf('Mean-Median difference in std units: %.2f\n', mean_median_diff);
+            
+            if mean_median_diff > MEAN_MEDIAN_THRESHOLD
+                fprintf('Large mean-median difference detected\n');
+                
+                % Find values that are pulling mean away from median
+                for i = 1:length(feature_values)
+                    val = feature_values(i);
+                    if abs(val - median_val) > MEAN_MEDIAN_THRESHOLD * std_val
+                        fprintf('Potential outlier at index %d: %.6f (%.2f std from median)\n', ...
+                                class_indices(i), val, abs(val - median_val)/std_val);
+                        rows_to_remove = [rows_to_remove class_indices(i)];
+                    end
+                end
+            end
+            
+            % Check z-scores
+            z_scores = abs(feature_values - mean_val) / std_val;
+            outlier_indices = find(z_scores > Z_SCORE_THRESHOLD);
+            
+            if ~isempty(outlier_indices)
+                fprintf('Z-score outliers found:\n');
+                for idx = outlier_indices'
+                    fprintf('Index %d: value %.6f, z-score %.2f\n', ...
+                           class_indices(idx), feature_values(idx), z_scores(idx));
+                    rows_to_remove = [rows_to_remove class_indices(idx)];
+                end
+            end
+            
+            % Print quartile information
+            q1 = quantile(feature_values, 0.25);
+            q3 = quantile(feature_values, 0.75);
+            iqr = q3 - q1;
+            fprintf('Q1: %.6f, Q3: %.6f, IQR: %.6f\n', q1, q3, iqr);
+        end
+    end
+    
+    % Remove outliers
+    if ~isempty(rows_to_remove)
+        rows_to_remove = unique(rows_to_remove); % Remove duplicates
+        fprintf('\nRemoving %d outliers from rows: ', length(rows_to_remove));
+        fprintf('%d ', rows_to_remove);
+        fprintf('\n');
+        fprintf('Dataset size before: %d\n', size(train, 1));
+        cleaned_train = train;
+        cleaned_train(rows_to_remove, :) = [];
+        fprintf('Dataset size after: %d\n', size(cleaned_train, 1));
+        
+        % Print impact on class distribution
+        fprintf('\nClass distribution after removal:\n');
+        remaining_classes = unique(cleaned_train(:,1));
+        for c = remaining_classes'
+            fprintf('Class %d: %d samples\n', c, sum(cleaned_train(:,1) == c));
+        end
+    else
+        fprintf('\nNo outliers found.\n');
+        cleaned_train = train;
+    end
+end 
+
+% Use the function
+train = find_class_outliers(train);
+           
+
 % the procedure of searching for and removing outliers must be repeated 
 % until no outliers exist in the training set
 
@@ -193,33 +270,74 @@ sgtitle('Box Plots of Features by Class');
 % in this case, it is enough to look at the graphs of two features and choose the ones that
 % give relatively well separated classes
 
-% after selecting features reduce both sets:
+function plot_feature_combinations(train)
+    % Plot scatter plots for all feature combinations, colored by class
+    %
+    % Parameters:
+    %   train - matrix where first column is class labels and rest are features
+    
+    features = 2:size(train, 2);
+    classes = unique(train(:,1));
+    colors = 'rgbcmykw';  % 8 different colors for 8 classes
+    markers = 'ox+*sdv^';  % 8 different markers for 8 classes
+    
+    for i = features
+        for j = i+1:size(train, 2)
+            figure;
+            hold on;
+            
+            % Plot each class with different color and marker
+            for c = 1:length(classes)
+                class_mask = train(:,1) == classes(c);
+                scatter(train(class_mask,i), train(class_mask,j), 50, ...
+                        [colors(c), markers(c)], 'filled');
+            end
+            
+            xlabel(['Feature ', num2str(i)]);
+            ylabel(['Feature ', num2str(j)]);
+            title(sprintf('Features %d vs %d', i, j));
+            legend(cellstr(num2str(classes)), 'Location', 'best');
+            grid on;
+            hold off;
+        end
+    end
+end
+
+plot_feature_combinations(train);
+
+% % after selecting features reduce both sets:
 % train = train(:, [1 4 6]);
 % test = test(:, [1 4 6]);
 % 				% ^^^ please, don't use these features!
 	
-	
+% Select features 2 and 4 for classification
+train = train(:, [1 2 4]);  % [class_label feature2 feature4]
+test = test(:, [1 2 4]);
+
+% Now proceed with classification using these features
 % % POINT 2
 
-% pdfindep_para = para_indep(train);
-% pdfmulti_para = para_multi(train);
-% pdfparzen_para = para_parzen(train, 0.001); 
-% % this window width should be included in your report!
+pdfindep_para = para_indep(train);
+pdfmulti_para = para_multi(train);
+pdfparzen_para = para_parzen(train, 0.0005); 
+% this window width should be included in your report!
 
-% % Point 2 results
-% base_ercf = zeros(1,3);
-% base_ercf(1) = mean(bayescls(test(:,2:end), @pdf_indep, pdfindep_para) != test(:,1));
-% base_ercf(2) = mean(bayescls(test(:,2:end), @pdf_multi, pdfmulti_para) != test(:,1));
-% base_ercf(3) = mean(bayescls(test(:,2:end), @pdf_parzen, pdfparzen_para) != test(:,1));
-% base_ercf
+priors = ones(1,8) * 0.125;  % Equal priors for all 8 classes
+
+% Point 2 results with equal priors
+base_ercf = zeros(1,3);
+base_ercf(1) = mean(bayescls(test(:,2:end), @pdf_indep, pdfindep_para, priors) != test(:,1));
+base_ercf(2) = mean(bayescls(test(:,2:end), @pdf_multi, pdfmulti_para, priors) != test(:,1));
+base_ercf(3) = mean(bayescls(test(:,2:end), @pdf_parzen, pdfparzen_para, priors) != test(:,1));
+base_ercf
 
 % % before moving to point 3 it would be wise to
 % % implement and test reduce function
 % % let's start with small test set - just 2 classes
 
-% rdlab = unique(pdf_test(:,1));
-% reduced = reduce(pdf_test, [0.8 0.4]);
-% [rdlab'; sum(reduced(:,1) == rdlab')]
+rdlab = unique(pdf_test(:,1));
+reduced = reduce(pdf_test, [0.8 0.4]);
+[rdlab'; sum(reduced(:,1) == rdlab')]
 
 % % ans =
 % %     1    2
@@ -235,11 +353,50 @@ sgtitle('Box Plots of Features by Class');
 % % In the report, please provide only the mean value and the standard deviation 
 % % of the error coefficient
 
-% parts = [0.1 0.25 0.5];
-% rep_cnt = 5; % at least
+parts = [0.1 0.25 0.5];
+rep_cnt = 5; % at least
+class_count = length(unique(train(:,1)));
+results = zeros(length(parts), rep_cnt, 3); % [parts, repetitions, classifiers]
 
-% % YOUR CODE GOES HERE 
-% %
+% For each reduction part
+for p = 1:length(parts)
+    % For each repetition
+    for r = 1:rep_cnt
+        % Reduce training set with same coefficient for all classes
+        reduced_train = reduce(train, parts(p) * ones(1, class_count));
+        
+        % Train classifiers on reduced set
+        pdfindep_para = para_indep(reduced_train);
+        pdfmulti_para = para_multi(reduced_train);
+        pdfparzen_para = para_parzen(reduced_train, 0.001);
+        
+        % Test classifiers
+        results(p,r,1) = mean(bayescls(test(:,2:end), @pdf_indep, pdfindep_para) != test(:,1));
+        results(p,r,2) = mean(bayescls(test(:,2:end), @pdf_multi, pdfmulti_para) != test(:,1));
+        results(p,r,3) = mean(bayescls(test(:,2:end), @pdf_parzen, pdfparzen_para) != test(:,1));
+    end
+end
+
+% Calculate mean and std for each combination
+mean_results = squeeze(mean(results, 2));  % Average across repetitions
+std_results = squeeze(std(results, 0, 2));  % Std across repetitions
+
+% Display results
+fprintf('\nPoint 3 Results:\n');
+fprintf('Reduction\tIndependent\tMultivariate\tParzen\n');
+for p = 1:length(parts)
+    fprintf('%.2f\t\t%.4f±%.4f\t%.4f±%.4f\t%.4f±%.4f\n', ...
+        parts(p), ...
+        mean_results(p,1), std_results(p,1), ...
+        mean_results(p,2), std_results(p,2), ...
+        mean_results(p,3), std_results(p,3));
+end
+% Point 3 Results:
+% Reduction	Independent	Multivariate	Parzen
+% 0.10		0.0360±0.0095	0.0104±0.0020	0.0971±0.0149
+% 0.25		0.0310±0.0078	0.0079±0.0028	0.0533±0.0109
+% 0.50		0.0338±0.0064	0.0059±0.0011	0.0394±0.0037
+
 
 % % note that for given experiment you should reduce all classes in the training
 % % set with the same reduction coefficient; assuming that class_count is the 
@@ -251,27 +408,115 @@ sgtitle('Box Plots of Features by Class');
 % % POINT 4
 % % Point 4 concerns only Parzen window classifier (on the full training set)
 
-% parzen_widths = [0.0001, 0.0005, 0.001, 0.005, 0.01];
-% parzen_res = zeros(1, columns(parzen_widths));
+parzen_widths = [0.0001, 0.0005, 0.001, 0.005, 0.01];
+parzen_res = zeros(1, columns(parzen_widths));
 
-% % YOUR CODE GOES HERE 
-% %
+% Test each width
+for w = 1:length(parzen_widths)
+    pdfparzen_para = para_parzen(train, parzen_widths(w));
+    parzen_res(w) = mean(bayescls(test(:,2:end), @pdf_parzen, pdfparzen_para) != test(:,1));
+end
 
-% [parzen_widths; parzen_res]
-% % Plots are sometimes better than numerical results
-% semilogx(parzen_widths, parzen_res)
+% Plot results
+figure;
+semilogx(parzen_widths, parzen_res, 'b-o');
+xlabel('Window Width');
+ylabel('Error Rate');
+title('Parzen Window Classification Error vs Window Width');
+grid on;
 
 % % POINT 5
 % % In point 5 you should reduce TEST SET
 % %
  
-% apriori = [0.165 0.085 0.085 0.165 0.165 0.085 0.085 0.165];
-% parts = [1.0 0.5 0.5 1.0 1.0 0.5 0.5 1.0];
-
-% % YOUR CODE GOES HERE 
-% %
 
 
+% New reduction pattern based on error rates and feature characteristics
+targeted_parts = zeros(1,8);
+
+% Classes with errors get more samples
+targeted_parts(1) = 1.0;  % Class 1: 0.44% error
+targeted_parts(6) = 1.0;  % Class 6: 1.75% error
+
+% Classes with perfect classification but high feature variance
+targeted_parts(3) = 0.75;  % High variance in Feature 2
+targeted_parts(5) = 0.75;  % Moderate variance
+
+% Classes with perfect classification and stable features
+targeted_parts([2 4 7 8]) = 0.5;  % Most stable classes
+
+% Calculate corresponding prior probabilities
+total_parts = sum(targeted_parts);
+targeted_apriori = targeted_parts / total_parts;
+
+fprintf('\nComparing All Approaches:\n');
+
+% Original settings
+parts = [1.0 0.5 0.5 1.0 1.0 0.5 0.5 1.0];
+original_apriori = [0.165 0.085 0.085 0.165 0.165 0.085 0.085 0.165];
+
+% Test all three approaches
+% 1. Without priors
+reduced_test_original = reduce(test, parts);
+no_prior_results = zeros(1, 3);
+no_prior_results(1) = mean(bayescls(reduced_test_original(:,2:end), @pdf_indep, pdfindep_para) != reduced_test_original(:,1));
+no_prior_results(2) = mean(bayescls(reduced_test_original(:,2:end), @pdf_multi, pdfmulti_para) != reduced_test_original(:,1));
+no_prior_results(3) = mean(bayescls(reduced_test_original(:,2:end), @pdf_parzen, pdfparzen_para) != reduced_test_original(:,1));
+
+% 2. Original reduction with original priors
+original_results = zeros(1, 3);
+original_results(1) = mean(bayescls(reduced_test_original(:,2:end), @pdf_indep, pdfindep_para, original_apriori) != reduced_test_original(:,1));
+original_results(2) = mean(bayescls(reduced_test_original(:,2:end), @pdf_multi, pdfmulti_para, original_apriori) != reduced_test_original(:,1));
+original_results(3) = mean(bayescls(reduced_test_original(:,2:end), @pdf_parzen, pdfparzen_para, original_apriori) != reduced_test_original(:,1));
+
+% 3. Targeted reduction with calculated priors
+reduced_test_targeted = reduce(test, targeted_parts);
+targeted_results = zeros(1, 3);
+targeted_results(1) = mean(bayescls(reduced_test_targeted(:,2:end), @pdf_indep, pdfindep_para, targeted_apriori) != reduced_test_targeted(:,1));
+targeted_results(2) = mean(bayescls(reduced_test_targeted(:,2:end), @pdf_multi, pdfmulti_para, targeted_apriori) != reduced_test_targeted(:,1));
+targeted_results(3) = mean(bayescls(reduced_test_targeted(:,2:end), @pdf_parzen, pdfparzen_para, targeted_apriori) != reduced_test_targeted(:,1));
+
+% Display comprehensive results
+fprintf('\n1. Without Prior Probabilities:\n');
+fprintf('Parts: '); fprintf('%.1f ', parts); fprintf('\n');
+fprintf('Results:\n');
+fprintf('Independent: %.4f\n', no_prior_results(1));
+fprintf('Multivariate: %.4f\n', no_prior_results(2));
+fprintf('Parzen: %.4f\n', no_prior_results(3));
+
+fprintf('\n2. Original Approach (with original priors):\n');
+fprintf('Parts: '); fprintf('%.1f ', parts); fprintf('\n');
+fprintf('Priors: '); fprintf('%.3f ', original_apriori); fprintf('\n');
+fprintf('Results:\n');
+fprintf('Independent: %.4f\n', original_results(1));
+fprintf('Multivariate: %.4f\n', original_results(2));
+fprintf('Parzen: %.4f\n', original_results(3));
+
+fprintf('\n3. Targeted Approach:\n');
+fprintf('Parts: '); fprintf('%.1f ', targeted_parts); fprintf('\n');
+fprintf('Priors: '); fprintf('%.3f ', targeted_apriori); fprintf('\n');
+fprintf('Results:\n');
+fprintf('Independent: %.4f\n', targeted_results(1));
+fprintf('Multivariate: %.4f\n', targeted_results(2));
+fprintf('Parzen: %.4f\n', targeted_results(3));
+
+% Per-class analysis for all approaches
+fprintf('\nPer-class error rates comparison:\n');
+fprintf('Class\tNo Prior\tOriginal\tTargeted\n');
+for c = 1:8
+    % No prior
+    class_mask_orig = reduced_test_original(:,1) == c;
+    error_no_prior = mean(bayescls(reduced_test_original(class_mask_orig,2:end), @pdf_multi, pdfmulti_para) != reduced_test_original(class_mask_orig,1));
+    
+    % Original prior
+    error_original = mean(bayescls(reduced_test_original(class_mask_orig,2:end), @pdf_multi, pdfmulti_para, original_apriori) != reduced_test_original(class_mask_orig,1));
+    
+    % Targeted prior
+    class_mask_target = reduced_test_targeted(:,1) == c;
+    error_targeted = mean(bayescls(reduced_test_targeted(class_mask_target,2:end), @pdf_multi, pdfmulti_para, targeted_apriori) != reduced_test_targeted(class_mask_target,1));
+    
+    fprintf('%d\t%.4f\t%.4f\t%.4f\n', c, error_no_prior, error_original, error_targeted);
+end
 % % POINT 6
 % % In point 6 we should consider data normalization
 
@@ -282,3 +527,54 @@ sgtitle('Box Plots of Features by Class');
 
 % % YOUR CODE GOES HERE 
 % %
+feature_std = std(train(:,2:end));
+fprintf('\nFeature standard deviations: %.4f %.4f\n', feature_std);
+
+% If standard deviations are very different, normalize
+if max(feature_std)/min(feature_std) > 10
+    fprintf('Features have very different scales. Normalizing...\n');
+    
+    % Calculate normalization parameters from training set
+    train_mean = mean(train(:,2:end));
+    train_std = std(train(:,2:end));
+    
+    % Normalize training and test sets
+    normalized_train = train;
+    normalized_test = test;
+    normalized_train(:,2:end) = (train(:,2:end) - train_mean) ./ train_std;
+    normalized_test(:,2:end) = (test(:,2:end) - train_mean) ./ train_std;
+    
+    % Test with normalized data
+    pdfindep_para = para_indep(normalized_train);
+    pdfmulti_para = para_multi(normalized_train);
+    pdfparzen_para = para_parzen(normalized_train, 0.0005);
+    
+    norm_results = zeros(1, 3);
+    norm_results(1) = mean(bayescls(normalized_test(:,2:end), @pdf_indep, pdfindep_para) != normalized_test(:,1));
+    norm_results(2) = mean(bayescls(normalized_test(:,2:end), @pdf_multi, pdfmulti_para) != normalized_test(:,1));
+    norm_results(3) = mean(bayescls(normalized_test(:,2:end), @pdf_parzen, pdfparzen_para) != normalized_test(:,1));
+    
+    fprintf('\nResults before normalization: %.4f %.4f %.4f\n', base_ercf);
+    fprintf('Results after normalization: %.4f %.4f %.4f\n', norm_results);
+else
+    fprintf('Feature scales are similar. Normalization not needed.\n');
+end
+
+% Test 1-NN classifier
+% Note: cls1nn processes one test sample at a time, so we need to loop
+predictions = zeros(size(test, 1), 1);
+for i = 1:size(test, 1)
+    predictions(i) = cls1nn(test(i,2:end), train);
+end
+
+nn_error = mean(predictions != test(:,1));
+fprintf('1-NN Classifier Error: %.4f\n', nn_error);
+
+
+
+
+
+
+
+
+
