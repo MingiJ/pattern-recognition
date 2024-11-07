@@ -19,11 +19,15 @@ function [sepplane mispos misneg] = perceptron(pclass, nclass)
 	%%% YOUR CODE GOES HERE %%%
 	%% You should:
 	%% 1. Check which samples are misclassified (boolean column vector)
+    misclassfied = tset * sepplane' < 0;
+    % sum(misclassfied) %justs for debugging. To see how change of delta reduces error rate;
 
 	%% 2. Compute separating plane correction 
 	%%		This is sum of misclassfied samples coordinate times learning rate 
+    delta = sum(tset(misclassfied,:), 1);  %assume that the learning rate is one
 	
 	%% 3. Modify solution (i.e. sepplane)
+    sepplane += delta;
 
 
 	%% 4. Optionally you can include additional conditions to the stop criterion
@@ -35,8 +39,9 @@ function [sepplane mispos misneg] = perceptron(pclass, nclass)
 
   %%% YOUR CODE GOES HERE %%%
   %% You should:
-  %% 1. Compute the numbers of false positives and false negatives
+  %% 1. Compute the numbers of false/misclassified positives and misclassified/false negatives
+  misclassfied = tset * sepplane' < 0;
 
-  mispos = nPos;
-  misneg = nNeg;
+  mispos = sum(misclassfied(1:nPos));
+  misneg = sum(misclassfied(nPos+1:end));
 end

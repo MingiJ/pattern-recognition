@@ -8,6 +8,7 @@ function ovrsp = trainOVRensemble(tset, tlab, htrain)
 %   the first column contains positive class label
 %   the second column contains -1 value
 %   columns (3:end) contain separating plane coefficients
+% for this if the sum of classification in a row is zero its a rejection. If its greater than 1 then its also a rejection.
 
   labels = unique(tlab);
   
